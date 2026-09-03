@@ -176,7 +176,8 @@ from exact_snn.event import ExactEventLinear   # event-driven drop-in layer
   oracle for the saltation math; not an `nn.Module`.
 - **`event.ExactEventLinear`** — a drop-in alternative to `ExactTTFSLinear` that
   solves the spike-time forward from the inter-event closed form of the kernel
-  (no dense grid scan), typically 2–3× faster. Same weight shape and interface.
+  (no dense grid scan). Same weight shape and interface; benchmark it on your
+  workload before relying on a speedup claim.
 
 **Calibration** — `ExactTTFSLinear.calibrate_init_fire()` (and the network-level
 `.calibrate_init_fire()` on `ExactTTFSNetwork`) adjusts each layer's bias so a
@@ -185,6 +186,9 @@ target fraction of neurons fire on random input at init, preventing a silent
 
 These components add mathematical capability as plug-in pieces; they do **not**
 impose a training loop, dataset, optimizer, scheduler, or model pipeline.
+The custom autograd functions are tested with the supported PyTorch eager
+execution path; `torch.compile` and ONNX export are not promised by this
+package.
 
 ## How the gradients are exact
 

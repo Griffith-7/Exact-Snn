@@ -86,7 +86,7 @@ class TestAutogradIntegration:
         eps = 1e-5
         g_fd = torch.zeros_like(W)
         smooth = torch.ones_like(W, dtype=torch.bool)
-        loss0 = float(loss_fn())
+        loss0 = float(loss_fn().detach())
         rows, cols = W.shape
         for i in range(rows):
             for j in range(cols):
@@ -94,10 +94,10 @@ class TestAutogradIntegration:
                 with torch.no_grad():
                     W[i, j] = orig + eps
                 lp, _ = loss_fn(), None
-                lp = float(loss_fn())
+                lp = float(loss_fn().detach())
                 with torch.no_grad():
                     W[i, j] = orig - eps
-                lm = float(loss_fn())
+                lm = float(loss_fn().detach())
                 with torch.no_grad():
                     W[i, j] = orig
                 d_r = (lp - loss0) / eps

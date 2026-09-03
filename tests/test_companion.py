@@ -248,6 +248,29 @@ def test_event_layer_autograd_backward():
     assert torch.isfinite(layer.weight.grad).all()
 
 
+def test_state_dict_round_trip():
+    """A plug-in layer must preserve parameters through normal PyTorch IO."""
+    source = ExactTTFSLinear(6, 4, dtype=DTYPE, device=DEVICE, seed=9)
+    restored = ExactTTFSLinear(6, 4, dtype=DTYPE, device=DEVICE, seed=10)
+    restored.load_state_dict(source.state_dict())
+    t_in = torch.rand(6, 5, dtype=DTYPE, device=DEVICE) * 20.0 + 0.1
+    assert torch.equal(source(t_in), restored(t_in))
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_linear_supports_standard_dtypes(dtype):
+    """Core layers should follow the dtype supplied by the host model."""
+    layer = ExactTTFSLinear(5, 3, dtype=dtype, device=DEVICE, grid_pts=101)
+    t_in = torch.rand(5, 4, dtype=dtype, device=DEVICE) * 20.0 + 0.1
+    output = layer(t_in)
+    assert output.dtype == dtype
+    loss = torch.where(torch.isfinite(output), output,
+                       torch.zeros_like(output)).sum()
+    loss.backward()
+    assert layer.weight.grad is not None
+    assert torch.isfinite(layer.weight.grad).all()
+
+
 # ---------------------------------------------------------------------------
 # Spike-time augmentation
 # ---------------------------------------------------------------------------
@@ -260,11 +283,10 @@ def test_spike_time_augment_clamps():
 
 
 def test_spike_time_augment_noise_and_shift_change_values():
-    t_in = torch.zeros(6, 6, dtype=DTYPE)
+    t_in = torch.full((6, 6), 20.0, dtype=DTYPE)
     out = spike_time_augment(t_in, t_max=40.0, noise_std=0.5, time_shift=2.0)
     assert torch.isfinite(out).all()
-    # additive noise (std 0.5) essentially never leaves every element at 0.
-    assert (out != 0.0).any()
+    assert (out != t_in).any()
 
 
 # ---------------------------------------------------------------------------

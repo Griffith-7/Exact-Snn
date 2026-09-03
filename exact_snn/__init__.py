@@ -6,7 +6,8 @@ components so that it integrates with the standard PyTorch ecosystem:
     * exact gradients via Implicit Function Theorem (IFT) - no surrogates
     * weight parameters are torch.nn.Parameter
     * forward/backward are wired into autograd via torch.autograd.Function
-    * works with torch.optim.Adam, nn.DataParallel, torch.compile, ONNX, etc.
+        * works with torch.optim.Adam, nn.DataParallel, and standard PyTorch
+            model composition.
 
 The mathematical kernels (grid-scan forward + vectorized IFT backward) are
 self-contained in this file, matching the verified engine 1:1, so the package
