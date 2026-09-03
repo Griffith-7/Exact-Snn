@@ -40,6 +40,7 @@ from exact_snn import (
     _backward_layer_torch,
     _forward_layer_torch,
     ExactTTFSLinear,
+    _validate_layer_config,
 )
 
 N_BISECT = 20
@@ -381,6 +382,9 @@ class ExactEventLinear(nn.Module):
                  device: Optional[torch.device] = None,
                  peak_tol: float = 1e-2) -> None:
         super().__init__()
+        _validate_layer_config(n_in, n_out, tm, ts, theta, t_max, 3)
+        if not dtype.is_floating_point:
+            raise ValueError("dtype must be a floating-point torch dtype")
         self.n_in = int(n_in)
         self.n_out = int(n_out)
         self.tm = float(tm)
@@ -407,6 +411,12 @@ class ExactEventLinear(nn.Module):
             raise ValueError(f"Expected (n_in, B) but got shape {tuple(t_prev.shape)}")
         if t_prev.shape[0] != self.n_in:
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
+        if not t_prev.is_floating_point():
+            raise ValueError("Input spike times must use a floating-point dtype")
+        if t_prev.dtype != self.weight.dtype:
+            raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {self.weight.dtype}")
+        if t_prev.device != self.weight.device:
+            raise ValueError(f"Input device {t_prev.device} != layer device {self.weight.device}")
         return _ExactEventLayerFn.apply(
             self.weight, t_prev, self.t_bias, self.theta, self.t_max,
             self.tm, self.ts, self.k_peak, self.peak_tol)

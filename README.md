@@ -40,6 +40,9 @@ Requires Python 3.10+, PyTorch ≥ 2.0.
 pip install -e .
 ```
 
+The full public API is documented in [docs/API.md](docs/API.md). Release notes
+and the versioning policy are in [CHANGELOG.md](CHANGELOG.md).
+
 The package is a single importable module:
 
 ```python
@@ -247,6 +250,18 @@ pytest tests/
 ```
 
 Tests cover the core IFT/conv backward (FD cosine comparison against
+
+## Benchmarking
+
+The optional event-driven layer can be compared with the grid layer on local
+hardware:
+
+```bash
+python benchmarks/benchmark_event.py
+```
+
+The command reports measured milliseconds and speedup for the selected workload;
+performance is hardware- and batch-size-dependent.
 numerical gradients on smooth weights), layer forward/backward shapes, the
 multi-spike saltation backward, and a regression test that the **vectorized**
 multi-spike forward matches the exact all-recompute reference. The optional

@@ -50,6 +50,16 @@ __all__ = [
     "train_simple",
 ]
 
+
+def _validate_layer_config(n_in: int, n_out: int, tm: float, ts: float,
+                           theta: float, t_max: float, grid_pts: int) -> None:
+    if n_in <= 0 or n_out <= 0:
+        raise ValueError("n_in and n_out must be positive")
+    if tm <= 0 or ts <= 0 or theta <= 0 or t_max <= 0:
+        raise ValueError("tm, ts, theta, and t_max must be positive")
+    if grid_pts < 3:
+        raise ValueError("grid_pts must be at least 3")
+
 # ---------------------------------------------------------------------------
 # Optional companion modules (lazy opt-in -- NOT imported at package load so
 # the core stays minimal and there is no circular-import risk). Import them
@@ -300,6 +310,9 @@ class ExactTTFSLinear(nn.Module):
                  device: Optional[torch.device] = None,
                  peak_tol: float = 1e-2) -> None:
         super().__init__()
+        _validate_layer_config(n_in, n_out, tm, ts, theta, t_max, grid_pts)
+        if not dtype.is_floating_point:
+            raise ValueError("dtype must be a floating-point torch dtype")
         self.n_in = int(n_in)
         self.n_out = int(n_out)
         self.tm = float(tm)
@@ -338,6 +351,12 @@ class ExactTTFSLinear(nn.Module):
         if t_prev.shape[0] != self.n_in:
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
         W = self.weight
+        if not t_prev.is_floating_point():
+            raise ValueError("Input spike times must use a floating-point dtype")
+        if t_prev.dtype != W.dtype:
+            raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {W.dtype}")
+        if t_prev.device != W.device:
+            raise ValueError(f"Input device {t_prev.device} != layer device {W.device}")
         grid = self.grid.to(dtype=W.dtype, device=W.device)
         return _ExactTTFSLayerFn.apply(
             W, t_prev, self.t_bias, self.theta, self.tm, self.ts,

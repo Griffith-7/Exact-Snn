@@ -68,6 +68,19 @@ def test_conv_stride_padding_output_size():
     assert t_out.shape == (2, 4, 5, 5)
 
 
+def test_conv_stride_backward_input_shape():
+    """Strided conv backward must return the original input-map shape."""
+    torch.manual_seed(1)
+    rng = np.random.default_rng(4)
+    layer = ExactTTFSConv2d(2, 3, kernel_size=3, stride=2, padding=1,
+                            dtype=DTYPE, device=DEVICE)
+    t_in = _rng_nodes((2, 2, 10, 10), rng, silent_frac=0.0)
+    t_out = layer(t_in)
+    _sum_loss(t_out).backward()
+    assert layer.weight.grad is not None
+    assert torch.isfinite(layer.weight.grad).all()
+
+
 def test_conv_gradient_fd_match():
     torch.manual_seed(0)
     rng = np.random.default_rng(3)

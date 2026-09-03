@@ -1,3 +1,4 @@
+import argparse
 import os, sys, time
 import numpy as np
 import torch
@@ -91,14 +92,26 @@ def build(depth, N, CH):
 
 
 def main():
-    N = int(sys.argv[1]) if len(sys.argv) > 1 else 1000
-    EPOCHS = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    CH = int(sys.argv[3]) if len(sys.argv) > 3 else 8
-    depth = sys.argv[4] if len(sys.argv) > 4 else "1"
-    depthkey = "28" if depth == "28" else int(depth)
-    model, t_enc, y = build(depthkey, N, CH)
-    print(f"Conv SNN depth={depth}: N={N} epochs={EPOCHS} channels={CH}", flush=True)
-    train(model, t_enc, y, EPOCHS)
+    parser = argparse.ArgumentParser(
+        description="Optional accuracy experiment for Exact-SNN conv layers.")
+    parser.add_argument("N", nargs="?", type=int, default=1000,
+                        help="number of MNIST samples")
+    parser.add_argument("epochs", nargs="?", type=int, default=20)
+    parser.add_argument("channels", nargs="?", type=int, default=8)
+    parser.add_argument("depth", nargs="?", choices=("1", "2", "28"), default="1",
+                        help="1 or 2 conv layers; 28 selects full-resolution mode")
+    parser.add_argument("--resolution", choices=(14, 28), type=int,
+                        help="input resolution; 28 selects full-resolution mode")
+    args = parser.parse_args()
+    if args.N <= 0 or args.epochs <= 0 or args.channels <= 0:
+        parser.error("N, epochs, and channels must be positive")
+    if args.resolution == 28 and args.depth == "2":
+        parser.error("depth 2 is currently defined for the 14x14 experiment")
+    depth = "28" if args.resolution == 28 or args.depth == "28" else int(args.depth)
+    model, t_enc, y = build(depth, args.N, args.channels)
+    print(f"Conv SNN depth={depth}: N={args.N} epochs={args.epochs} "
+          f"channels={args.channels}", flush=True)
+    train(model, t_enc, y, args.epochs)
 
 
 def train(model, t_enc, y, epochs, bs=64, lr=3e-3, t_max=40.0):
@@ -118,7 +131,7 @@ def train(model, t_enc, y, epochs, bs=64, lr=3e-3, t_max=40.0):
             loss = latency_cross_entropy(out, yb, t_max)
             loss.backward()
             opt.step()
-            tot += float(loss)
+            tot += float(loss.detach())
             nb += 1
         acc = eval_acc(model, t_enc, y, bs=256, t_max=t_max)
         sched.step()
@@ -138,23 +151,6 @@ def eval_acc(model, t_enc, y, bs=256, t_max=40.0):
             total += len(yb)
     model.train()
     return correct / max(total, 1)
-
-
-def main():
-    N = int(sys.argv[1]) if len(sys.argv) > 1 else 1000
-    EPOCHS = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    CH = int(sys.argv[3]) if len(sys.argv) > 3 else 8
-    X, y = load_mnist(N)
-    X14 = downsample(X, 2).view(N, 1, 14, 14)
-    conv = ExactTTFSConv2d(1, CH, kernel_size=3, stride=1, padding=1,
-                           t_max=40.0, dtype=DTYPE, device=DEVICE,
-                           w_scale=0.35, bias_val=0.5, grid_pts=301)
-    fc = ExactTTFSLinear(CH * 14 * 14, 10, t_max=40.0, dtype=DTYPE,
-                         device=DEVICE, bias_val=1.5, grid_pts=301)
-    model = ConvSNN(conv, fc).to(DEVICE)
-    t_enc = latency_encode(X14, t_max=40.0)
-    print(f"Conv SNN: N={N} epochs={EPOCHS} channels={CH} 14x14", flush=True)
-    train(model, t_enc, y, EPOCHS)
 
 
 if __name__ == "__main__":

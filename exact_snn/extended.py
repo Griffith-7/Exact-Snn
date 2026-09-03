@@ -33,6 +33,7 @@ from exact_snn import (
     _ExactTTFSLayerFn,
     ExactTTFSLinear,
     latency_cross_entropy,
+    _validate_layer_config,
 )
 
 __all__ = [
@@ -344,6 +345,9 @@ class ExactMultiSpike(nn.Module):
                  device: Optional[torch.device] = None,
                  first_spike_only: bool = False) -> None:
         super().__init__()
+        _validate_layer_config(n_in, n_out, tm, ts, theta, t_max, grid_pts)
+        if not dtype.is_floating_point:
+            raise ValueError("dtype must be a floating-point torch dtype")
         self.n_in = int(n_in)
         self.n_out = int(n_out)
         self.tm = float(tm)
@@ -371,6 +375,12 @@ class ExactMultiSpike(nn.Module):
         """t_prev: (n_in, B) -> t_all: (n_out, B, K)."""
         if t_prev.shape[0] != self.n_in:
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
+        if not t_prev.is_floating_point():
+            raise ValueError("Input spike times must use a floating-point dtype")
+        if t_prev.dtype != self.weight.dtype:
+            raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {self.weight.dtype}")
+        if t_prev.device != self.weight.device:
+            raise ValueError(f"Input device {t_prev.device} != layer device {self.weight.device}")
         W = self.weight
         grid = self.grid.to(dtype=W.dtype, device=W.device)
         return _ExactMultiSpikeFn.apply(
@@ -445,7 +455,7 @@ class _ExactTTFSConvFn(torch.autograd.Function):
             lam_chn.append(F.fold(
                 ch_rows.reshape(ctx.B, kh * kw, ctx.H_out * ctx.W_out),
                 output_size=(ctx.H_in + 2 * p, ctx.W_in + 2 * p),
-                kernel_size=(kh, kw), stride=s))
+                kernel_size=(kh, kw), stride=s).squeeze(1))
         lam_full = torch.stack(lam_chn, dim=1)
         lam_crop = lam_full[:, :, p:p + ctx.H_in, p:p + ctx.W_in]
         return (grad, lam_crop, None, None, None, None, None, None, None,
@@ -469,6 +479,12 @@ class ExactTTFSConv2d(nn.Module):
                  device: Optional[torch.device] = None,
                  peak_tol: float = 1e-2) -> None:
         super().__init__()
+        _validate_layer_config(in_channels * kernel_size * kernel_size,
+                               out_channels, tm, ts, theta, t_max, grid_pts)
+        if kernel_size <= 0 or stride <= 0 or padding < 0:
+            raise ValueError("kernel_size and stride must be positive; padding cannot be negative")
+        if not dtype.is_floating_point:
+            raise ValueError("dtype must be a floating-point torch dtype")
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.kernel_size = int(kernel_size)
@@ -503,6 +519,12 @@ class ExactTTFSConv2d(nn.Module):
         if C != self.in_channels:
             raise ValueError(f"Input channels {C} != {self.in_channels}")
         Wt = self.weight
+        if not t_in.is_floating_point():
+            raise ValueError("Input spike times must use a floating-point dtype")
+        if t_in.dtype != Wt.dtype:
+            raise ValueError(f"Input dtype {t_in.dtype} != layer dtype {Wt.dtype}")
+        if t_in.device != Wt.device:
+            raise ValueError(f"Input device {t_in.device} != layer device {Wt.device}")
         grid = self.grid.to(dtype=Wt.dtype, device=Wt.device)
         return _ExactTTFSConvFn.apply(
             Wt, t_in, self.t_bias, self.theta, self.tm, self.ts, self._alpha,
@@ -532,6 +554,11 @@ class ExactRecurrent(nn.Module):
                  device: Optional[torch.device] = None,
                  peak_tol: float = 1e-2) -> None:
         super().__init__()
+        _validate_layer_config(n_in, n_out, tm, ts, theta, t_max, grid_pts)
+        if tau_rec <= 0:
+            raise ValueError("tau_rec must be positive")
+        if not dtype.is_floating_point:
+            raise ValueError("dtype must be a floating-point torch dtype")
         self.n_in = int(n_in)
         self.n_out = int(n_out)
         self.tm = float(tm)
@@ -572,6 +599,14 @@ class ExactRecurrent(nn.Module):
         exact IFT gradients.
         """
         B = t_in.shape[1]
+        if t_in.dim() != 2 or t_in.shape[0] != self.n_in:
+            raise ValueError(f"Expected ({self.n_in}, B) input but got {tuple(t_in.shape)}")
+        if not t_in.is_floating_point():
+            raise ValueError("Input spike times must use a floating-point dtype")
+        if t_in.dtype != self.weight.dtype:
+            raise ValueError(f"Input dtype {t_in.dtype} != layer dtype {self.weight.dtype}")
+        if t_in.device != self.weight.device:
+            raise ValueError(f"Input device {t_in.device} != layer device {self.weight.device}")
         if self._trace.shape[1] != B:
             self.reset_state(B)
         tr = self._trace.detach()

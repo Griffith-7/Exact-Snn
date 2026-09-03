@@ -31,6 +31,24 @@ def _make_net(sizes=(784, 64, 10), **kwargs):
 
 
 class TestAutogradIntegration:
+    def test_invalid_configuration_is_rejected(self):
+        with pytest.raises(ValueError, match="n_in and n_out"):
+            ExactTTFSLinear(0, 5)
+        with pytest.raises(ValueError, match="must be positive"):
+            ExactTTFSLinear(5, 5, tm=0.0)
+        with pytest.raises(ValueError, match="at least 3"):
+            ExactTTFSLinear(5, 5, grid_pts=2)
+
+    def test_input_dtype_is_checked(self):
+        layer = ExactTTFSLinear(3, 2, dtype=DTYPE, device=DEVICE)
+        integer_input = torch.ones(3, 2, dtype=torch.int64, device=DEVICE)
+        with pytest.raises(ValueError, match="floating-point dtype"):
+            layer(integer_input)
+        wrong_dtype = torch.ones(3, 2, dtype=torch.float32, device=DEVICE)
+        if DTYPE != torch.float32:
+            with pytest.raises(ValueError, match="Input dtype"):
+                layer(wrong_dtype)
+
     def test_weights_are_parameters(self):
         layer = ExactTTFSLinear(10, 5, dtype=DTYPE, device=DEVICE)
         assert isinstance(layer.weight, torch.nn.Parameter)
