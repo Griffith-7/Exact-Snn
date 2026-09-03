@@ -1,0 +1,14 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Experimental logs / profiling (dev-only, not part of the plug-in)
+conv_log_*.txt
+_tmp_convprof.py
+
+# Downloaded datasets (re-fetched by examples on demand)
+examples/data/MNIST/
