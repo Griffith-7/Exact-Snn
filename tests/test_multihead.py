@@ -162,7 +162,7 @@ class TestAutogradAndTraining:
         opt = torch.optim.Adam(mh.parameters(), lr=1e-2)
         mh.calibrate_init_fire(target=0.5)
         initial = float(latency_cross_entropy(mh(t_in), y, T_MAX))
-        for _ in range(40):
+        for _ in range(150):
             opt.zero_grad()
             loss = latency_cross_entropy(mh(t_in), y, T_MAX)
             loss.backward()

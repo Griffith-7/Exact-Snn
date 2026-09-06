@@ -192,11 +192,14 @@ class TestGradientFDFlow:
 
     def test_full_layer_grad_cosine_vs_fd(self):
         torch.manual_seed(2024)          # deterministic regardless of suite order
-        attn = _make_attn(n=6)
-        t_in = _rand_times(6, 5)
-        g = torch.Generator().manual_seed(11)
-        y = torch.randint(0, 6, (5,), generator=g,
-                          dtype=torch.long).to(DEVICE)
+        attn = _det_attn2d()
+        # device-independent input: generate on the CPU RNG, then move, so the
+        # same numbers are used whether the block runs on cpu or cuda.
+        g = torch.Generator(device="cpu").manual_seed(2024)
+        t_in = (torch.rand(6, 5, generator=g, dtype=DTYPE)
+                * 0.8 * 40.0 + 0.1).to(DEVICE)
+        gy = torch.Generator(device="cpu").manual_seed(11)
+        y = torch.randint(0, 6, (5,), generator=gy, dtype=torch.long).to(DEVICE)
 
         def loss_fn():
             return latency_cross_entropy(attn(t_in), y, 40.0)
@@ -256,6 +259,28 @@ def _seq_det_attn():
     with torch.no_grad():
         for p in (a.WQ, a.WK, a.WV):
             p.weight.data = torch.tensor([[2.5, 0.3]], dtype=DTYPE)
+    return a
+
+
+def _det_attn2d():
+    """Deterministic 6x6 attention block that fires with input-dependent
+    (FD-friendly) crossings on any device.
+
+    The default w_scale/bias initialization puts the first-spike time on the
+    bias-kernel edge, so with some seeds the output collapses to a single
+    constant (zero gradient for the FD comparison). Fixed strong weights make
+    the crossing genuinely input- and weight-dependent, so the analytic vs FD
+    cosine stays meaningful on cpu and cuda alike.
+    """
+    a = ExactSpikingAttention(6, 6, tm=15.0, ts=4.0, theta=1.0, t_max=40.0,
+                              w_scale=0.8, bias_val=1.2, grid_pts=2001,
+                              seed=0, dtype=DTYPE, device=DEVICE, temp=1.0)
+    with torch.no_grad():
+        for p in (a.WQ, a.WK, a.WV):
+            w = 0.5 * torch.eye(6, dtype=DTYPE, device=DEVICE) + 0.3
+            p.weight.data = torch.cat(
+                [w, torch.full((6, 1), 0.2, dtype=DTYPE, device=DEVICE)],
+                dim=1)
     return a
 
 
