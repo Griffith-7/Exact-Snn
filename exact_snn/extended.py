@@ -9,6 +9,10 @@ Contents:
     ExactTTFSConv2d   - convolutional TTFS layer (spike-time maps)
     ExactMultiSpike   - multi-spike layer with exact saltation gradients
     ExactRecurrent    - recurrent TTFS layer with eligibility traces
+    ExactTTFSRnn      - exact recurrent cell with full per-neuron feedback
+    ExactSpikingFFN   - exact spiking feed-forward block (expand -> contract)
+    ExactSpikingAttention - single-head spiking self-attention
+    ExactSpikingMultiHeadAttention - multi-head spiking self-attention
     multispike_latency_loss    - differentiable CE on first-spike times
     spike_count_cross_entropy  - differentiable soft spike-count CE
 """
@@ -35,11 +39,20 @@ from exact_snn import (
     latency_cross_entropy,
     _validate_layer_config,
 )
+from exact_snn.attention import ExactSpikingAttention
+from exact_snn.multihead import ExactSpikingMultiHeadAttention
+from exact_snn.recurrent import ExactTTFSRnn
+from exact_snn.ffn import ExactSpikingFFN
+from exact_snn._validation import validate_spike_times
 
 __all__ = [
     "ExactTTFSConv2d",
     "ExactMultiSpike",
     "ExactRecurrent",
+    "ExactTTFSRnn",
+    "ExactSpikingFFN",
+    "ExactSpikingAttention",
+    "ExactSpikingMultiHeadAttention",
     "multispike_latency_loss",
     "spike_count_cross_entropy",
 ]
@@ -377,6 +390,7 @@ class ExactMultiSpike(nn.Module):
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
         if not t_prev.is_floating_point():
             raise ValueError("Input spike times must use a floating-point dtype")
+        validate_spike_times(t_prev)
         if t_prev.dtype != self.weight.dtype:
             raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {self.weight.dtype}")
         if t_prev.device != self.weight.device:
@@ -521,6 +535,7 @@ class ExactTTFSConv2d(nn.Module):
         Wt = self.weight
         if not t_in.is_floating_point():
             raise ValueError("Input spike times must use a floating-point dtype")
+        validate_spike_times(t_in)
         if t_in.dtype != Wt.dtype:
             raise ValueError(f"Input dtype {t_in.dtype} != layer dtype {Wt.dtype}")
         if t_in.device != Wt.device:
@@ -603,6 +618,7 @@ class ExactRecurrent(nn.Module):
             raise ValueError(f"Expected ({self.n_in}, B) input but got {tuple(t_in.shape)}")
         if not t_in.is_floating_point():
             raise ValueError("Input spike times must use a floating-point dtype")
+        validate_spike_times(t_in)
         if t_in.dtype != self.weight.dtype:
             raise ValueError(f"Input dtype {t_in.dtype} != layer dtype {self.weight.dtype}")
         if t_in.device != self.weight.device:

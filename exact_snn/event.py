@@ -42,6 +42,7 @@ from exact_snn import (
     ExactTTFSLinear,
     _validate_layer_config,
 )
+from exact_snn._validation import validate_spike_times
 
 N_BISECT = 20
 N_NEWTON = 8
@@ -413,6 +414,7 @@ class ExactEventLinear(nn.Module):
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
         if not t_prev.is_floating_point():
             raise ValueError("Input spike times must use a floating-point dtype")
+        validate_spike_times(t_prev)
         if t_prev.dtype != self.weight.dtype:
             raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {self.weight.dtype}")
         if t_prev.device != self.weight.device:

@@ -1,26 +1,32 @@
 # ExactSNN-nn
 
 Exact, closed-form gradients for spiking neural networks — packaged as a
-drop-in `torch.nn` library. No surrogate gradients for firing neurons, no
-membrane ODE simulation, and no custom CUDA kernels: every `loss.backward()`
-flows through **implicit-function-theorem (IFT)** and **saltation** matrix
-gradients of the spike-time maps.
+drop-in `torch.nn` library. No surrogate gradients for firing neurons and no
+membrane ODE simulation: every `loss.backward()` flows through
+**implicit-function-theorem (IFT)** and **saltation** matrix gradients of the
+spike-time maps.
 
 The layered models (full-featured exact conv, multi-spike, recurrent) are
 faster and more memory-efficient than the original [Exact-SNN]
-implementation: vectorized in pure PyTorch/torch.autograd (no C++), with the
+implementation: vectorized in pure PyTorch/torch.autograd, with the
 bottlenecks (the bisection root-finds and the peak searches) accelerated by
-grid interpolation of the sampled membrane voltage.
+grid interpolation of the sampled membrane voltage. An optional fused CUDA
+backend (`exact_snn/cuda_ops.py`) is auto-selected for CUDA float32 when
+available and falls back to the torch path otherwise.
 
 [Exact-SNN]: https://github.com/Noxsios/Exact-SNN
 
 ## Features
 
-- **Four layer types**, all exact-gradient `nn.Module`s:
+- **Layer types**, all exact-gradient `nn.Module`s:
   - `ExactTTFSLinear` — time-to-first-spike (TTFS) fully-connected
   - `ExactTTFSConv2d` — TTFS 2-D convolution (unfold → IFT → fold)
   - `ExactMultiSpike` — multi-spike neuron; full spike train `(n_out, B, K)`
   - `ExactRecurrent` — recurrent TTFS layer with a shared feedback eligibility trace
+  - `ExactTTFSRnn` — exact recurrent cell with full per-neuron feedback (NBTT)
+  - `ExactSpikingAttention` / `ExactSpikingMultiHeadAttention` — exact spiking
+    self-attention (single- and multi-head) with closed-form combine gradients
+  - `ExactSpikingFFN` — exact spiking feed-forward block (`n_in → n_hidden → n_out`)
 - **Exact backward** through spike times (IFT for the first spike, saltation
   chain for subsequent resets) — the gradient is mathematical, not a proxy.
 - **Big-batch**, pure-`torch` vectorized forward (no Python per-kernel loops):
@@ -48,7 +54,8 @@ The package is a single importable module:
 ```python
 from exact_snn import ExactTTFSLinear, latency_encode, latency_cross_entropy
 from exact_snn.extended import (
-    ExactTTFSConv2d, ExactMultiSpike, ExactRecurrent,
+    ExactTTFSConv2d, ExactMultiSpike, ExactRecurrent, ExactTTFSRnn,
+    ExactSpikingAttention, ExactSpikingMultiHeadAttention, ExactSpikingFFN,
     spike_count_cross_entropy, multispike_latency_loss,
 )
 ```

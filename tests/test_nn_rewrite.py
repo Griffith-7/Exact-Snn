@@ -49,6 +49,21 @@ class TestAutogradIntegration:
             with pytest.raises(ValueError, match="Input dtype"):
                 layer(wrong_dtype)
 
+    def test_nan_input_is_rejected(self):
+        layer = ExactTTFSLinear(3, 2, dtype=DTYPE, device=DEVICE)
+        nan_input = torch.full((3, 2), float("nan"), dtype=DTYPE, device=DEVICE)
+        with pytest.raises(ValueError, match="must not contain NaN"):
+            layer(nan_input)
+        # silent (inf) inputs remain valid - they just propagate silence
+        silent_input = torch.full((3, 2), float("inf"), dtype=DTYPE, device=DEVICE)
+        out = layer(silent_input)
+        assert out.shape == (2, 2)
+        # with a strongly-negative bias a fully silent input stays fully silent
+        with torch.no_grad():
+            layer.weight[:, -1] = -1e3
+        out2 = layer(silent_input)
+        assert torch.isinf(out2).all(), "silent input with negative bias must stay silent"
+
     def test_weights_are_parameters(self):
         layer = ExactTTFSLinear(10, 5, dtype=DTYPE, device=DEVICE)
         assert isinstance(layer.weight, torch.nn.Parameter)

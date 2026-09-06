@@ -39,7 +39,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-__version__ = "2.0.0"
+from ._validation import validate_spike_times
+
+__version__ = "3.2.2"
 __author__ = "Sumith Kumar"
 
 __all__ = [
@@ -271,9 +273,24 @@ def _backward_layer_torch(W, t_prev, t_bias, t_post, lam_post, up,
 class _ExactTTFSLayerFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, W, t_prev, t_bias, theta, tm, ts, alpha, k_peak, grid, peak_tol):
-        t_post, up = _forward_layer_torch(
-            W, t_prev, t_bias, theta, grid, tm, ts, alpha, k_peak,
-            peak_tol=float(peak_tol))
+        use_cuda = (
+            W.is_cuda
+            and W.dtype == torch.float32
+            and t_prev.is_cuda
+            and t_prev.dtype == torch.float32
+        )
+        if use_cuda:
+            from exact_snn import cuda_ops
+            use_cuda = cuda_ops.is_enabled()
+        if use_cuda:
+            from exact_snn import cuda_ops
+            t_post, up = cuda_ops.cuda_forward(
+                W, t_prev, t_bias, theta, grid, tm, ts, alpha, k_peak,
+                n_bisect=15, n_newton=8, peak_tol=float(peak_tol))
+        else:
+            t_post, up = _forward_layer_torch(
+                W, t_prev, t_bias, theta, grid, tm, ts, alpha, k_peak,
+                peak_tol=float(peak_tol))
         ctx.save_for_backward(W, t_prev, t_post, up)
         ctx.t_bias = float(t_bias)
         ctx.tm = float(tm)
@@ -351,8 +368,7 @@ class ExactTTFSLinear(nn.Module):
         if t_prev.shape[0] != self.n_in:
             raise ValueError(f"Input dim {t_prev.shape[0]} != n_in {self.n_in}")
         W = self.weight
-        if not t_prev.is_floating_point():
-            raise ValueError("Input spike times must use a floating-point dtype")
+        validate_spike_times(t_prev)
         if t_prev.dtype != W.dtype:
             raise ValueError(f"Input dtype {t_prev.dtype} != layer dtype {W.dtype}")
         if t_prev.device != W.device:
@@ -363,7 +379,7 @@ class ExactTTFSLinear(nn.Module):
             self._alpha, self.k_peak, grid, self.peak_tol)
 
     def calibrate_init_fire(self, target: float = 0.5, n_probe: int = 32,
-                            cal_grid_pts: int = 65) -> None:
+                            cal_grid_pts: int = 65, iters: int = 6) -> None:
         """Post-init calibration so roughly `target` of this layer's neurons
         spike on a random reference input.
 
@@ -377,34 +393,53 @@ class ExactTTFSLinear(nn.Module):
         peak potential for the knot, together with a coarse internal grid and a
         compact probe batch so the estimate is cheap.
 
+        The bias column is set PER NEURON (the classic single-scalar
+        ``theta - quantile`` shortcut badly under-shoots when the peak is driven
+        by input spikes rather than by the bias kernel). Each iteration applies
+        a Newton-style correction
+
+            bias_i += (theta - u_peak,i) / K(t_peak,i - t_bias)
+
+        where ``K(t_peak - t_bias)`` is the bias-kernel height at that peak
+        (envelope theorem), so a handful of iterations land the target-order
+        sample's peak on the threshold.
+
         Args:
             target: target firing fraction in (0, 1].
             n_probe: number of random probe samples.
             cal_grid_pts: number of points in the calibration grid.
+            iters: refinement iterations of the per-neuron bias solve.
         """
         from exact_snn.existence import peak_margin_torch
         dev = self.weight.device
         dtype = self.weight.dtype
         cal_grid = torch.linspace(0.0, self.t_max, int(cal_grid_pts),
                                   dtype=dtype, device=dev)
-        probe = (torch.rand(self.n_in, int(n_probe), dtype=dtype, device=dev)
+        n_probe = int(n_probe)
+        probe = (torch.rand(self.n_in, n_probe, dtype=dtype, device=dev)
                  * 0.8 * self.t_max + 0.1)
-        W = self.weight.detach()
-        t_post, _ = _forward_layer_torch(
-            W, probe, self.t_bias, self.theta, cal_grid, self.tm, self.ts,
-            self._alpha, self.k_peak, peak_tol=self.peak_tol)
-        fired = torch.isfinite(t_post)
-        t_peak, u_peak = peak_margin_torch(
-            W, probe, self.t_bias, self.theta, cal_grid, self.tm, self.ts,
-            self._alpha, self.k_peak)
-        u_eff = torch.where(fired, self.theta * torch.ones_like(u_peak), u_peak)
-        need = u_eff.reshape(-1)
-        target = float(target)
-        k = min(max(1, int(round(target * need.numel()))), need.numel())
-        quantile = torch.sort(need).values[k - 1]
-        bias = (self.theta - quantile).clamp(min=0.0).item()
+        ar = torch.arange(self.n_out, dtype=torch.long, device=dev)
+        ker = lambda d: _K(d, self.tm, self.ts, self._alpha, self.k_peak)
+        k = max(1, int(round(float(target) * n_probe)))
         with torch.no_grad():
-            self.weight[:, -1] = bias
+            for _ in range(int(iters)):
+                W = self.weight
+                t_post, _ = _forward_layer_torch(
+                    W, probe, self.t_bias, self.theta, cal_grid, self.tm,
+                    self.ts, self._alpha, self.k_peak,
+                    peak_tol=self.peak_tol)
+                fired = torch.isfinite(t_post)
+                t_peak, u_peak = peak_margin_torch(
+                    W, probe, self.t_bias, self.theta, cal_grid, self.tm,
+                    self.ts, self._alpha, self.k_peak)
+                need = torch.where(
+                    fired, torch.full_like(u_peak, self.theta), u_peak)
+                vals, idx = torch.sort(need, dim=1, descending=True)
+                delta = self.theta - vals[:, k - 1]
+                t_k = t_peak[ar, idx[:, k - 1]]
+                h = ker(t_k - self.t_bias).clamp(min=1e-3)
+                self.weight[:, -1] = (self.weight[:, -1] + delta / h).clamp(
+                    min=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +456,8 @@ def latency_encode(images: torch.Tensor, t_max: float = 40.0,
     Returns:
         Spike times (same shape): bright pixels map to early (small) times.
     """
+    if torch.isnan(images).any():
+        raise ValueError("latency_encode input must not contain NaN")
     x = torch.clamp(images, min_t, max_t)
     return t_max * (1.0 - x) + 0.1
 
@@ -443,6 +480,9 @@ def latency_cross_entropy(t_out: torch.Tensor, y: torch.Tensor,
     Returns:
         A scalar differentiable loss tensor (supports .backward()).
     """
+    if torch.isnan(t_out).any():
+        raise ValueError("latency_cross_entropy t_out must not contain NaN "
+                         "(silent outputs are inf)")
     B = t_out.shape[1]
     t = torch.where(torch.isfinite(t_out), t_out,
                     torch.full_like(t_out, 2.0 * t_max + 10.0))
@@ -491,7 +531,7 @@ class ExactTTFSNetwork(nn.Module):
         return latency_cross_entropy(t_out, y, self.t_max, beta)
 
     def calibrate_init_fire(self, target: float = 0.5, n_probe: int = 32,
-                            cal_grid_pts: int = 65) -> None:
+                            cal_grid_pts: int = 65, iters: int = 6) -> None:
         """Calibrate every layer's bias so roughly `target` fires per layer.
 
         Propagates a random probe input through the network, calibrating each
@@ -502,31 +542,38 @@ class ExactTTFSNetwork(nn.Module):
         dtype = self.layers[0].weight.dtype
         cal_grid = torch.linspace(0.0, self.t_max, int(cal_grid_pts),
                                   dtype=dtype, device=dev)
-        probe = (torch.rand(self.sizes[0], int(n_probe), dtype=dtype,
+        n_probe = int(n_probe)
+        probe = (torch.rand(self.sizes[0], n_probe, dtype=dtype,
                             device=dev) * 0.8 * self.t_max + 0.1)
         cur = probe
         for layer in self.layers:
-            W = layer.weight.detach()
-            t_post, _ = _forward_layer_torch(
-                W, cur, layer.t_bias, layer.theta, cal_grid, layer.tm,
-                layer.ts, layer._alpha, layer.k_peak, peak_tol=layer.peak_tol)
-            fired = torch.isfinite(t_post)
-            t_peak, u_peak = peak_margin_torch(
-                W, cur, layer.t_bias, layer.theta, cal_grid, layer.tm,
-                layer.ts, layer._alpha, layer.k_peak)
-            u_eff = torch.where(fired, layer.theta * torch.ones_like(u_peak),
-                                u_peak)
-            need = u_eff.reshape(-1)
-            k = min(max(1, int(round(float(target) * need.numel()))),
-                    need.numel())
-            quantile = torch.sort(need).values[k - 1]
-            bias = (layer.theta - quantile).clamp(min=0.0).item()
             with torch.no_grad():
-                layer.weight[:, -1] = bias
+                for _ in range(int(iters)):
+                    W = layer.weight
+                    t_post, _ = _forward_layer_torch(
+                        W, cur, layer.t_bias, layer.theta, cal_grid, layer.tm,
+                        layer.ts, layer._alpha, layer.k_peak,
+                        peak_tol=layer.peak_tol)
+                    fired = torch.isfinite(t_post)
+                    t_peak, u_peak = peak_margin_torch(
+                        W, cur, layer.t_bias, layer.theta, cal_grid, layer.tm,
+                        layer.ts, layer._alpha, layer.k_peak)
+                    need = torch.where(
+                        fired, torch.full_like(u_peak, layer.theta), u_peak)
+                    vals, idx = torch.sort(need, dim=1, descending=True)
+                    k = max(1, int(round(float(target) * n_probe)))
+                    delta = layer.theta - vals[:, k - 1]
+                    t_k = t_peak[torch.arange(layer.n_out, dtype=torch.long,
+                                              device=dev), idx[:, k - 1]]
+                    h = _K(t_k - layer.t_bias, layer.tm, layer.ts,
+                           layer._alpha, layer.k_peak).clamp(min=1e-3)
+                    layer.weight[:, -1] = (
+                        layer.weight[:, -1] + delta / h).clamp(min=0.0)
             # propagate the (re-biased) layer output to feed the next layer
             t_post2, _ = _forward_layer_torch(
-                W, cur, layer.t_bias, layer.theta, cal_grid, layer.tm,
-                layer.ts, layer._alpha, layer.k_peak, peak_tol=layer.peak_tol)
+                layer.weight.detach(), cur, layer.t_bias, layer.theta,
+                cal_grid, layer.tm, layer.ts, layer._alpha, layer.k_peak,
+                peak_tol=layer.peak_tol)
             cur = t_post2
 
 
@@ -556,6 +603,8 @@ def train_simple(model: nn.Module, X: torch.Tensor, y: torch.Tensor,
     dtype = next(model.parameters()).dtype
     X = torch.as_tensor(X, device=device, dtype=dtype)
     y = torch.as_tensor(y, device=device, dtype=torch.long)
+    if torch.isnan(X).any() or (X < 0).any() or (X > 1).any():
+        raise ValueError("train_simple X must be finite pixel intensities in [0, 1]")
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     N = X.shape[0]
     rng = np.random.default_rng(seed)

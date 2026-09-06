@@ -14,3 +14,7 @@ _tmp_convprof.py
 
 # Downloaded datasets (re-fetched by examples on demand)
 examples/data/MNIST/
+
+# Local data & private experiment scripts (not part of the shipped package)
+data/
+experiments/
