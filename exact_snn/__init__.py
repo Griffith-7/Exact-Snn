@@ -41,7 +41,7 @@ import torch.nn as nn
 
 from ._validation import validate_spike_times
 
-__version__ = "3.2.2"
+__version__ = "3.2.3"
 __author__ = "Sumith Kumar"
 
 __all__ = [

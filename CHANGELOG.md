@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.2.3 - 2026-09-06
+
+- CI fix: the test suite now passes on CPU-only runners (GitHub Actions
+  ubuntu, no CUDA), where `torch.cuda.is_available()` is `False`.
+  - `tests/test_attention.py::test_full_layer_grad_cosine_vs_fd`: replaced the
+    random-init FD comparison (whose spike times sit on the bias-kernel edge and
+    can collapse to a single constant, zero-gradient output for some seeds) with
+    a deterministic input-dependent block (`_det_attn2d`) and a device-independent
+    CPU-RNG input, so the analytic-vs-FD cosine stays ~1.0 on cpu and cuda.
+  - `tests/test_multihead.py::test_trains_small_task`: the 2-class loss hovered
+    at chance after 40 Adam steps and drifted up on CPU; trains for 150 steps so
+    it reliably decreases on every platform.
+- No library code changes; behavior of `exact_snn` is unchanged.
+
 ## 3.2.2 - 2026-09-06
 
 - `ExactSpikingFFN.calibrate_init_fire` with `use_norm=True` now pushes the
